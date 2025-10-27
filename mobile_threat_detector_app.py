@@ -132,6 +132,9 @@ def calculate_fallback_risk(user_data):
     
     st.write(f"🔧 Rule-based risk: {risk_score}%")
     st.write(f"🔧 Rule-based prediction: {'THREAT' if prediction == 1 else 'NO THREAT'}")
+
+    # Add confidence calculation based on risk score
+    confidence = max(80, 100 - risk_score)  # Higher confidence for lower risk
     
     return prediction, probability
 
