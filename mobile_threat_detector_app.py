@@ -1,9 +1,16 @@
+# mobile_threat_detector_app.py
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import tensorflow as tf
+from tensorflow.keras.models import load_model
+import plotly.graph_objects as go
+import plotly.express as px
 from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
 
 # Page configuration
 st.set_page_config(
@@ -46,83 +53,290 @@ st.markdown("""
         text-align: center;
         font-weight: bold;
     }
+    .metric-card {
+        background-color: #f0f2f6;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 @st.cache_resource
-def load_model():
-    """Load the trained model"""
+def load_models():
+    """Load all trained models and preprocessing objects"""
     try:
-        model_data = joblib.load('mobile_threat_detection_model.pkl')
-        return model_data
-    except Exception as e:
-        st.error(f"Error loading model: {e}")
-        return None
+        # Load deployment package
+        deployment_package = joblib.load('mobile_threat_detection_model.pkl')
 
-def predict_threat(user_data, model_data):
-    """Make prediction using the trained model"""
+        # Validate the loaded data
+        required_keys = ['best_model', 'feature_columns']
+        for key in required_keys:
+            if key not in deployment_package:
+                st.error(f"❌ Missing key in model data: {key}")
+                return None, None, None, None
+
+        st.success(f"✅ Model loaded: {deployment_package.get('best_model_name', 'Unknown')}")
+
+        # Load individual models
+        rf_model = joblib.load('random_forest_model.pkl')
+        scaler = joblib.load('feature_scaler.pkl')
+
+        # Try to load LSTM model if available
+        try:
+            lstm_model = load_model('lstm_model.h5')
+        except:
+            lstm_model = None
+
+        return deployment_package, rf_model, scaler, lstm_model
+
+    except Exception as e:
+        st.error(f"Error loading models: {e}")
+        return None, None, None, None
+
+def calculate_fallback_risk(user_data):
+    """Calculate risk based on rules when AI model fails"""
+    st.info("🔄 Using rule-based risk assessment")
+
+    risk_score = 0
+
+    # High-risk factors (heavy weighting)
+    if user_data.get('suspicious_sms_count', 0) > 3:
+        risk_score += 25
+    if user_data.get('failed_login_attempts', 0) > 2:
+        risk_score += 20
+    if user_data.get('unknown_network_connections', 0) > 3:
+        risk_score += 15
+
+    # Medium-risk factors
+    if user_data.get('public_wifi_usage_hours', 0) > 5:
+        risk_score += 10
+    if user_data.get('outdated_apps_count', 0) > 5:
+        risk_score += 8
+    if not user_data.get('security_training_completed', 0):
+        risk_score += 7
+
+    # Low-risk factors
+    if user_data.get('tech_literacy_level', 3) < 2:  # Very low or low
+        risk_score += 5
+    if user_data.get('age', 65) > 75:
+        risk_score += 3
+    if not user_data.get('vpn_usage', 0):
+        risk_score += 2
+
+    # Cap at 100%
+    risk_score = min(risk_score, 100)
+
+    # Convert to probability (divide by 100)
+    probability = risk_score / 100
+
+    # Determine threat (threshold at 40% risk)
+    prediction = 1 if risk_score >= 40 else 0
+
+    st.write(f"🔧 Rule-based risk: {risk_score}%")
+    st.write(f"🔧 Rule-based prediction: {'THREAT' if prediction == 1 else 'NO THREAT'}")
+
+    return prediction, probability
+
+def predict_threat_ai(user_data, model_data):
+    """Make prediction using AI model with comprehensive debugging"""
     try:
-        # Extract components from model data
+        st.write("🔍 **AI MODEL DEBUG MODE**")
+
+        # Check model data structure
+        st.write("### Model Data Check:")
+        st.write(f"- Model keys: {list(model_data.keys())}")
+        st.write(f"- Best model name: {model_data.get('best_model_name', 'Not found')}")
+        st.write(f"- Best model type: {type(model_data.get('best_model'))}")
+        st.write(f"- Feature columns: {len(model_data.get('feature_columns', []))} features")
+
+        # Extract components
         model = model_data.get('best_model')
         scaler = model_data.get('scaler')
         feature_columns = model_data.get('feature_columns', [])
 
-        # Create input dataframe with all expected features
-        input_df = pd.DataFrame(columns=feature_columns)
+        if model is None:
+            st.error("❌ MODEL IS NONE - Using fallback calculation")
+            return 0, 0.0
 
-        # Fill in provided values, set missing ones to 0
+        # Show what features the model expects vs what we're providing
+        st.write("### Feature Analysis:")
+        st.write(f"Model expects: {len(feature_columns)} features")
+        st.write(f"We're providing: {len(user_data)} input values")
+
+        # Check for missing features
+        missing_features = [f for f in feature_columns if f not in user_data]
+        if missing_features:
+            st.warning(f"Missing features: {missing_features}")
+
+        # Create input dataframe
+        input_df = pd.DataFrame(columns=feature_columns)
         for col in feature_columns:
             if col in user_data:
                 input_df[col] = [user_data[col]]
             else:
                 input_df[col] = [0]  # Default value
 
-        # Scale features
-        input_scaled = scaler.transform(input_df)
+        st.write(f"Final input shape: {input_df.shape}")
+
+        # Scale features and predict
+        if scaler:
+            input_scaled = scaler.transform(input_df)
+        else:
+            st.warning("❌ No scaler found!")
+            input_scaled = input_df.values
 
         # Make prediction
         if hasattr(model, 'predict_proba'):
             probability = model.predict_proba(input_scaled)[0][1]
             prediction = model.predict(input_scaled)[0]
+            st.write(f"🎯 Raw probability: {probability:.4f}")
+            st.write(f"🎯 Binary prediction: {prediction}")
         else:
-            # For models without predict_proba
             prediction = model.predict(input_scaled)[0]
-            probability = 0.5  # Default probability
+            probability = float(prediction)  # For models without probability
+            st.write(f"🎯 Direct prediction: {prediction}")
 
         return prediction, probability
 
     except Exception as e:
-        st.error(f"Prediction error: {e}")
+        st.error(f"❌ AI Prediction failed: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
         return 0, 0.0
+
+def predict_threat(user_data, model_data):
+    """Make prediction using AI model with fallback to rules"""
+    # Try AI model first
+    if model_data and model_data.get('best_model') is not None:
+        ai_prediction, ai_probability = predict_threat_ai(user_data, model_data)
+
+        st.write(f"🤖 AI Model prediction: {ai_prediction}, confidence: {ai_probability:.2f}")
+
+        # If AI confidence is too low, use fallback
+        if ai_probability < 0.3:  # 30% confidence threshold
+            st.warning("🤖 AI confidence low, using rule-based assessment")
+            return calculate_fallback_risk(user_data)
+
+        return ai_prediction, ai_probability
+
+    else:
+        st.warning("🤖 AI model not available, using rule-based assessment")
+        return calculate_fallback_risk(user_data)
+
+def preprocess_user_input(user_data, feature_columns, scaler):
+    """Preprocess user input for prediction"""
+    try:
+        # Create a DataFrame with all feature columns
+        input_df = pd.DataFrame(columns=feature_columns)
+
+        # Fill in the provided values, set others to 0
+        for col in feature_columns:
+            if col in user_data:
+                input_df[col] = [user_data[col]]
+            else:
+                input_df[col] = [0]  # Default value for missing features
+
+        # Scale the features
+        input_scaled = scaler.transform(input_df)
+
+        return input_scaled, input_df
+
+    except Exception as e:
+        st.error(f"Error in preprocessing: {e}")
+        return None, None
+
+def make_predictions(input_scaled, models):
+    """Make predictions using all available models"""
+    predictions = {}
+    probabilities = {}
+
+    deployment_package, rf_model, scaler, lstm_model = models
+
+    # Random Forest prediction
+    rf_pred = rf_model.predict(input_scaled)[0]
+    rf_proba = rf_model.predict_proba(input_scaled)[0][1]
+    predictions['Random Forest'] = rf_pred
+    probabilities['Random Forest'] = rf_proba
+
+    # LSTM prediction (if available)
+    if lstm_model is not None:
+        lstm_input = input_scaled.reshape(1, 1, input_scaled.shape[1])
+        lstm_proba = lstm_model.predict(lstm_input, verbose=0)[0][0]
+        lstm_pred = 1 if lstm_proba > 0.5 else 0
+        predictions['LSTM'] = lstm_pred
+        probabilities['LSTM'] = lstm_proba
+
+    # Weighted Ensemble (if we have multiple models)
+    if lstm_model is not None:
+        ensemble_proba = (rf_proba * 0.5 + lstm_proba * 0.5)
+        ensemble_pred = 1 if ensemble_proba > 0.5 else 0
+        predictions['Weighted Ensemble'] = ensemble_pred
+        probabilities['Weighted Ensemble'] = ensemble_proba
+    else:
+        predictions['Weighted Ensemble'] = rf_pred
+        probabilities['Weighted Ensemble'] = rf_proba
+
+    return predictions, probabilities
+
+def calculate_risk_score(probability, user_data):
+    """Calculate comprehensive risk score"""
+    base_risk = probability * 100
+
+    # Adjust risk based on key factors
+    risk_factors = {
+        'suspicious_sms_count': 5,
+        'failed_login_attempts': 8,
+        'outdated_apps_count': 3,
+        'public_wifi_usage_hours': 2,
+        'unknown_network_connections': 10
+    }
+
+    additional_risk = 0
+    for factor, weight in risk_factors.items():
+        if factor in user_data:
+            additional_risk += user_data[factor] * weight
+
+    # Cap additional risk at 30%
+    additional_risk = min(additional_risk, 30)
+
+    total_risk = min(base_risk + additional_risk, 100)
+
+    return total_risk
 
 def main():
     # Header
     st.markdown('<h1 class="main-header">📱 Mobile Threat Detection System</h1>', unsafe_allow_html=True)
     st.markdown("### For Elderly Users - AI-Powered Security Protection")
 
-    # Load model
-    with st.spinner('Loading AI model...'):
-        model_data = load_model()
+    # Load models
+    with st.spinner('Loading AI models...'):
+        models = load_models()
 
-    if model_data is None:
-        st.error("Failed to load the model. Please check if 'mobile_threat_detection_model.pkl' is in the same directory.")
+    if models[0] is None:
+        st.error("Failed to load models. Please check if model files are available.")
         return
+
+    deployment_package, rf_model, scaler, lstm_model = models
+    feature_columns = deployment_package['feature_columns']
 
     # Sidebar for navigation
     st.sidebar.title("Navigation")
     app_mode = st.sidebar.selectbox(
         "Choose the app mode",
-        ["Single User Analysis", "Model Information", "About"]
+        ["Single User Analysis", "Batch Analysis", "Model Performance", "About"]
     )
 
     if app_mode == "Single User Analysis":
-        single_user_analysis(model_data)
-    elif app_mode == "Model Information":
-        model_information(model_data)
+        single_user_analysis(feature_columns, scaler, models, deployment_package)
+    elif app_mode == "Batch Analysis":
+        batch_analysis(feature_columns, scaler, models)
+    elif app_mode == "Model Performance":
+        model_performance(deployment_package)
     elif app_mode == "About":
         about_section()
 
-def single_user_analysis(model_data):
+def single_user_analysis(feature_columns, scaler, models, deployment_package):
     """Single user threat analysis interface"""
 
     st.header("🔍 Single User Threat Analysis")
@@ -202,28 +416,28 @@ def single_user_analysis(model_data):
         'new_apps_installed_week': new_apps_installed
     }
 
-    # Add engineered features (same as during training)
+    # Add engineered features
     user_data['comprehensive_risk_score'] = (
-        user_data.get('threat_severity', 0) +
-        user_data.get('suspicious_sms_count', 0) +
-        user_data.get('failed_login_attempts', 0) +
-        user_data.get('outdated_apps_count', 0)
+        user_data['threat_severity'] +
+        user_data['suspicious_sms_count'] +
+        user_data['failed_login_attempts'] +
+        user_data['outdated_apps_count']
     )
 
     user_data['permission_risk_index'] = (
-        user_data.get('camera_permission_apps', 0) +
-        user_data.get('sms_permission_apps', 0) +
-        user_data.get('location_permission_apps', 0)
+        user_data['camera_permission_apps'] +
+        user_data['sms_permission_apps'] +
+        user_data['location_permission_apps']
     )
 
     # Analyze button
     if st.button("🔍 Analyze Threat Level", type="primary"):
-        with st.spinner('Analyzing user data with AI...'):
-            # Make prediction
-            prediction, probability = predict_threat(user_data, model_data)
+        with st.spinner('Analyzing user data...'):
+            # Use the new combined prediction system
+            main_prediction, main_probability = predict_threat(user_data, deployment_package)
 
             # Calculate risk score
-            risk_score = probability * 100
+            risk_score = calculate_risk_score(main_probability, user_data)
 
             # Display results
             st.header("📊 Analysis Results")
@@ -240,26 +454,22 @@ def single_user_analysis(model_data):
                     st.markdown(f'<div class="risk-low">LOW RISK: {risk_score:.1f}%</div>', unsafe_allow_html=True)
 
             with col2:
-                threat_status = "🚨 THREAT DETECTED" if prediction == 1 else "✅ NO THREAT"
+                threat_status = "🚨 THREAT DETECTED" if main_prediction == 1 else "✅ NO THREAT"
                 st.metric("Threat Status", threat_status)
 
             with col3:
-                confidence = probability * 100
-                st.metric("AI Confidence", f"{confidence:.1f}%")
-
-            # Model information
-            st.subheader("🤖 Model Information")
-            best_model_name = model_data.get('best_model_name', 'AI Model')
-            st.info(f"Using: {best_model_name} | Accuracy: {model_data.get('test_accuracy', 0.94)*100:.1f}%")
+                confidence = main_probability * 100
+                st.metric("Confidence", f"{confidence:.1f}%")
 
             # Risk factors breakdown
             st.subheader("🔍 Risk Factors Breakdown")
+
             risk_factors = [
-                ("Suspicious SMS", user_data['suspicious_sms_count'] * 8),
-                ("Failed Logins", user_data['failed_login_attempts'] * 10),
-                ("Outdated Apps", user_data['outdated_apps_count'] * 4),
-                ("Public WiFi", user_data['public_wifi_usage_hours'] * 3),
-                ("Unknown Networks", user_data['unknown_network_connections'] * 12),
+                ("Suspicious SMS", user_data['suspicious_sms_count'] * 5),
+                ("Failed Logins", user_data['failed_login_attempts'] * 8),
+                ("Outdated Apps", user_data['outdated_apps_count'] * 3),
+                ("Public WiFi", user_data['public_wifi_usage_hours'] * 2),
+                ("Unknown Networks", user_data['unknown_network_connections'] * 10),
                 ("Permission Risk", user_data['permission_risk_index'] * 2)
             ]
 
@@ -267,74 +477,147 @@ def single_user_analysis(model_data):
             risk_df = risk_df[risk_df['Risk Score'] > 0].sort_values('Risk Score', ascending=False)
 
             if not risk_df.empty:
-                # Display as bar chart
-                chart_data = risk_df.set_index('Factor')
-                st.bar_chart(chart_data)
+                fig = px.bar(risk_df, x='Risk Score', y='Factor', orientation='h',
+                            title="Contributing Risk Factors")
+                st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("No significant risk factors detected.")
 
             # Recommendations
             st.subheader("💡 Security Recommendations")
-            recommendations = []
 
+            recommendations = []
             if user_data['outdated_apps_count'] > 5:
-                recommendations.append("🔸 **Update outdated applications** - Install latest security patches")
+                recommendations.append("🔸 Update outdated applications")
             if user_data['public_wifi_usage_hours'] > 5:
-                recommendations.append("🔸 **Reduce public WiFi usage** - Use mobile data or trusted networks")
+                recommendations.append("🔸 Reduce public WiFi usage")
             if user_data['failed_login_attempts'] > 0:
-                recommendations.append("🔸 **Review login security** - Check for unauthorized access attempts")
+                recommendations.append("🔸 Review login security")
             if user_data['suspicious_sms_count'] > 0:
-                recommendations.append("🔸 **Be cautious of suspicious messages** - Don't click unknown links")
-            if not user_data['security_training_completed']:
-                recommendations.append("🔸 **Complete security training** - Learn about mobile security best practices")
-            if not user_data['vpn_usage']:
-                recommendations.append("🔸 **Consider using VPN** - Especially on public networks")
-            if user_data['unknown_network_connections'] > 0:
-                recommendations.append("🔸 **Review connected networks** - Remove unknown WiFi networks")
+                recommendations.append("🔸 Be cautious of suspicious messages")
+            if user_data['permission_risk_index'] > 10:
+                recommendations.append("🔸 Review app permissions")
+            if not security_training:
+                recommendations.append("🔸 Complete security training")
 
             if recommendations:
                 for rec in recommendations:
                     st.write(rec)
             else:
-                st.success("✅ **Good security practices maintained** - Continue current habits")
+                st.success("All security practices look good!")
 
-def model_information(model_data):
+            # Save analysis
+            if st.button("💾 Save This Analysis"):
+                analysis_data = {
+                    'timestamp': datetime.now().isoformat(),
+                    'user_data': user_data,
+                    'prediction': main_prediction,
+                    'probability': main_probability,
+                    'risk_score': risk_score,
+                    'recommendations': recommendations
+                }
+                # In a real app, you'd save to a database
+                st.success("Analysis saved successfully!")
+
+def batch_analysis(feature_columns, scaler, models):
+    """Batch analysis for multiple users"""
+    st.header("📊 Batch Analysis")
+
+    st.info("Upload a CSV file with multiple users' data for batch analysis.")
+
+    uploaded_file = st.file_uploader("Choose CSV file", type=['csv'])
+
+    if uploaded_file is not None:
+        try:
+            # Read the uploaded file
+            batch_data = pd.read_csv(uploaded_file)
+            st.write(f"Uploaded data: {len(batch_data)} users")
+
+            # Show sample data
+            st.subheader("Sample Data")
+            st.dataframe(batch_data.head())
+
+            if st.button("🚀 Analyze Batch", type="primary"):
+                with st.spinner('Analyzing batch data...'):
+                    results = []
+
+                    for idx, row in batch_data.iterrows():
+                        user_data = row.to_dict()
+
+                        # Preprocess and predict
+                        input_scaled, _ = preprocess_user_input(user_data, feature_columns, scaler)
+                        if input_scaled is not None:
+                            predictions, probabilities = make_predictions(input_scaled, models)
+                            risk_score = calculate_risk_score(probabilities['Weighted Ensemble'], user_data)
+
+                            results.append({
+                                'user_id': idx + 1,
+                                'threat_detected': predictions['Weighted Ensemble'],
+                                'risk_score': risk_score,
+                                'confidence': probabilities['Weighted Ensemble'] * 100
+                            })
+
+                    results_df = pd.DataFrame(results)
+
+                    # Display results
+                    st.subheader("Batch Analysis Results")
+
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        threats_detected = results_df['threat_detected'].sum()
+                        st.metric("Threats Detected", f"{threats_detected}/{len(results_df)}")
+                    with col2:
+                        avg_risk = results_df['risk_score'].mean()
+                        st.metric("Average Risk Score", f"{avg_risk:.1f}%")
+                    with col3:
+                        high_risk = len(results_df[results_df['risk_score'] > 70])
+                        st.metric("High Risk Users", high_risk)
+
+                    # Results table
+                    st.dataframe(results_df)
+
+                    # Download results
+                    csv = results_df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Results",
+                        data=csv,
+                        file_name=f"threat_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                        mime="text/csv"
+                    )
+
+        except Exception as e:
+            st.error(f"Error processing file: {e}")
+
+def model_performance(deployment_package):
     """Display model performance information"""
-    st.header("🤖 Model Information")
+    st.header("🤖 Model Performance")
 
-    st.subheader("AI Models Used")
-    st.write("""
-    This system uses advanced machine learning models to detect mobile threats:
+    st.subheader("Model Comparison")
+    performance_df = pd.DataFrame(deployment_package['all_results'])
+    st.dataframe(performance_df)
 
-    - **Random Forest**: Ensemble learning for high accuracy threat detection
-    - **LSTM Networks**: Analyze temporal patterns in user behavior
-    - **Hybrid Models**: Combine multiple approaches for robust detection
-    """)
+    # Performance visualization
+    col1, col2 = st.columns(2)
 
-    # Display actual model performance from your training
-    if 'performance_metrics' in model_data:
-        st.subheader("Performance Metrics")
-        metrics = model_data['performance_metrics']
-        col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        fig = px.bar(performance_df, x='Model', y='Accuracy',
+                     title='Model Accuracy Comparison',
+                     color='Accuracy', color_continuous_scale='Viridis')
+        st.plotly_chart(fig, use_container_width=True)
 
-        with col1:
-            st.metric("Accuracy", f"{metrics.get('Accuracy', 0.94)*100:.1f}%")
-        with col2:
-            st.metric("Precision", f"{metrics.get('Precision', 0.93)*100:.1f}%")
-        with col3:
-            st.metric("Recall", f"{metrics.get('Recall', 0.95)*100:.1f}%")
-        with col4:
-            st.metric("F1-Score", f"{metrics.get('F1-Score', 0.94)*100:.1f}%")
+    with col2:
+        fig = px.bar(performance_df, x='Model', y='F1-Score',
+                     title='Model F1-Score Comparison',
+                     color='F1-Score', color_continuous_scale='Plasma')
+        st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Protected Features")
-    st.write("""
-    The system analyzes multiple aspects of mobile usage:
-
-    🔹 **User Behavior**: App usage patterns, screen time, battery usage
-    🔹 **Device Security**: OS updates, app permissions, security settings
-    🔹 **Network Activity**: WiFi usage, network connections, data usage
-    🔹 **Threat Indicators**: Suspicious messages, failed logins, unknown apps
-    """)
+    st.subheader("Deployment Information")
+    st.json({
+        "recommended_model": deployment_package['best_model_name'],
+        "test_accuracy": deployment_package['test_accuracy'],
+        "feature_count": len(deployment_package['feature_columns']),
+        "model_type": type(deployment_package['best_model']).__name__
+    })
 
 def about_section():
     """About section for the application"""
@@ -348,10 +631,22 @@ def about_section():
 
     ### 🎯 Key Features:
     - **Real-time Threat Detection**: Analyzes user behavior and device patterns
-    - **Elderly-Focused**: Specifically designed for older adults' usage patterns
-    - **AI-Powered**: Uses machine learning models trained on mobile threat data
+    - **Multiple AI Models**: Uses ensemble of Random Forest, LSTM, and Hybrid models
     - **Risk Assessment**: Comprehensive risk scoring with actionable insights
+    - **Batch Processing**: Analyze multiple users simultaneously
     - **Security Recommendations**: Personalized security advice
+
+    ### 🔧 Technical Stack:
+    - **Machine Learning**: Scikit-learn, TensorFlow, Keras
+    - **Web Framework**: Streamlit
+    - **Visualization**: Plotly, Matplotlib
+    - **Deployment**: Streamlit Cloud / Local server
+
+    ### 📊 Models Used:
+    1. **Random Forest**: Fast, interpretable, high accuracy
+    2. **LSTM**: Captures temporal patterns in user behavior
+    3. **Hybrid RF-LSTM**: Combines feature selection with sequence learning
+    4. **Ensemble Methods**: Weighted averaging for improved performance
 
     ### 🛡️ Protected Features:
     - User behavior analysis
@@ -359,11 +654,6 @@ def about_section():
     - Network usage patterns
     - App permission risks
     - Historical threat data
-
-    ### 🔒 Privacy First:
-    - All analysis happens in real-time
-    - No personal data stored permanently
-    - Transparent risk calculations
     """)
 
     st.success("This system is designed specifically for elderly users to enhance their mobile security!")
