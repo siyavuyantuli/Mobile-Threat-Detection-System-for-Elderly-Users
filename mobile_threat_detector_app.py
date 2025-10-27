@@ -4,8 +4,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
-# REMOVED: import tensorflow as tf
-# REMOVED: from tensorflow.keras.models import load_model
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
@@ -74,7 +72,7 @@ def load_models():
         for key in required_keys:
             if key not in deployment_package:
                 st.error(f"❌ Missing key in model data: {key}")
-                return None, None, None
+                return None, None, None, None
                 
         st.success(f"✅ Model loaded: {deployment_package.get('best_model_name', 'Unknown')}")
 
@@ -124,19 +122,22 @@ def calculate_fallback_risk(user_data):
     # Cap at 100%
     risk_score = min(risk_score, 100)
     
-    # Convert to probability (divide by 100)
-    probability = risk_score / 100
-    
     # Determine threat (threshold at 40% risk)
     prediction = 1 if risk_score >= 40 else 0
     
+    # Calculate confidence based on how clear the risk assessment is
+    if risk_score > 70 or risk_score < 20:
+        confidence = 0.95  # Very clear cases - high confidence
+    elif risk_score > 50 or risk_score < 40:
+        confidence = 0.85  # Moderately clear cases
+    else:
+        confidence = 0.75  # Borderline cases - lower confidence
+    
     st.write(f"🔧 Rule-based risk: {risk_score}%")
     st.write(f"🔧 Rule-based prediction: {'THREAT' if prediction == 1 else 'NO THREAT'}")
-
-    # Add confidence calculation based on risk score
-    confidence = max(80, 100 - risk_score)  # Higher confidence for lower risk
+    st.write(f"🔧 Rule-based confidence: {confidence:.1%}")
     
-    return prediction, probability
+    return prediction, confidence
 
 def predict_threat_ai(user_data, model_data):
     """Make prediction using AI model with comprehensive debugging"""
@@ -216,7 +217,7 @@ def predict_threat(user_data, model_data):
         # If AI confidence is too low, use fallback but keep AI probability
         if ai_probability < 0.3:  # 30% confidence threshold
             st.warning("🤖 AI confidence low, using rule-based assessment")
-            rule_prediction, rule_risk = calculate_fallback_risk(user_data)
+            rule_prediction, rule_confidence = calculate_fallback_risk(user_data)
             # Return AI probability but rule-based decision
             return rule_prediction, ai_probability
             
@@ -224,9 +225,7 @@ def predict_threat(user_data, model_data):
         
     else:
         st.warning("🤖 AI model not available, using rule-based assessment")
-        rule_prediction, rule_risk = calculate_fallback_risk(user_data)
-        # Convert rule risk to probability for confidence display
-        rule_confidence = max(0.7, rule_risk / 100)  # At least 70% confidence for rules
+        rule_prediction, rule_confidence = calculate_fallback_risk(user_data)
         return rule_prediction, rule_confidence
 
 def calculate_risk_score(probability, user_data):
@@ -272,6 +271,20 @@ def main():
     else:
         st.error("❌ AI Models Failed to Load - Using Rule-Based Mode Only")
         deployment_package = {'feature_columns': []}
+
+    # Sidebar for navigation
+    st.sidebar.title("Navigation")
+    app_mode = st.sidebar.selectbox(
+        "Choose the app mode",
+        ["Single User Analysis", "Model Performance", "About"]
+    )
+
+    if app_mode == "Single User Analysis":
+        single_user_analysis(deployment_package)
+    elif app_mode == "Model Performance":
+        model_performance(deployment_package)
+    elif app_mode == "About":
+        about_section()
 
 def single_user_analysis(deployment_package):
     """Single user threat analysis interface"""
