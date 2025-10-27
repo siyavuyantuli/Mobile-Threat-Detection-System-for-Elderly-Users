@@ -57,6 +57,18 @@ st.markdown("""
         border-radius: 10px;
         margin: 10px 0;
     }
+    .confidence-high {
+        color: #4CAF50;
+        font-weight: bold;
+    }
+    .confidence-medium {
+        color: #ffa500;
+        font-weight: bold;
+    }
+    .confidence-low {
+        color: #ff4b4b;
+        font-weight: bold;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -133,11 +145,14 @@ def calculate_fallback_risk(user_data):
     else:
         confidence = 0.75  # Borderline cases - lower confidence
     
-    st.write(f"🔧 Rule-based risk: {risk_score}%")
+    st.write(f"🔧 Rule-based risk score: {risk_score}%")
     st.write(f"🔧 Rule-based prediction: {'THREAT' if prediction == 1 else 'NO THREAT'}")
     st.write(f"🔧 Rule-based confidence: {confidence:.1%}")
     
-    return prediction, confidence
+    # Convert risk score to probability (0-1 scale)
+    rule_probability = risk_score / 100.0 if prediction == 1 else (100 - risk_score) / 100.0
+    
+    return prediction, confidence, rule_probability
 
 def predict_threat_ai(user_data, model_data):
     """Make prediction using AI model with comprehensive debugging"""
@@ -191,7 +206,7 @@ def predict_threat_ai(user_data, model_data):
         if hasattr(model, 'predict_proba'):
             probability = model.predict_proba(input_scaled)[0][1]
             prediction = model.predict(input_scaled)[0]
-            st.write(f"🎯 Raw probability: {probability:.4f}")
+            st.write(f"🎯 Raw probability (threat): {probability:.4f}")
             st.write(f"🎯 Binary prediction: {prediction}")
         else:
             prediction = model.predict(input_scaled)[0]
@@ -206,39 +221,63 @@ def predict_threat_ai(user_data, model_data):
         st.code(traceback.format_exc())
         return 0, 0.0
 
+def calculate_ai_confidence(ai_probability):
+    """Calculate true AI confidence (distance from decision boundary)"""
+    # Confidence = how far from 0.5 (the decision boundary)
+    # Converts to 0-1 scale where 1.0 = maximum confidence
+    confidence = abs(ai_probability - 0.5) * 2
+    return confidence
+
+def get_confidence_level(confidence):
+    """Get confidence level description"""
+    if confidence >= 0.8:
+        return "high", "confidence-high"
+    elif confidence >= 0.6:
+        return "medium", "confidence-medium"
+    else:
+        return "low", "confidence-low"
+
 def predict_threat(user_data, model_data):
-    """Make prediction using AI model with fallback to rules"""
+    """Make prediction using AI model with PROPER confidence handling"""
     # Try AI model first
     if model_data and model_data.get('best_model') is not None:
         ai_prediction, ai_probability = predict_threat_ai(user_data, model_data)
         
-        st.write(f"🤖 AI Model prediction: {ai_prediction}, confidence: {ai_probability:.2f}")
+        # PROPER CONFIDENCE CALCULATION
+        ai_confidence = calculate_ai_confidence(ai_probability)
+        confidence_level, confidence_class = get_confidence_level(ai_confidence)
         
-        # If AI confidence is too low, use fallback but keep AI probability
-        if ai_probability < 0.3:  # 30% confidence threshold
-            st.warning("🤖 AI confidence low, using rule-based assessment")
-            rule_prediction, rule_confidence = calculate_fallback_risk(user_data)
-            # Return AI probability but rule-based decision
-            return rule_prediction, ai_probability
-            
-        return ai_prediction, ai_probability
+        st.write(f"🤖 AI Raw Probability: {ai_probability:.3f}")
+        st.write(f"🤖 AI Confidence: <span class='{confidence_class}'>{ai_confidence:.1%} ({confidence_level})</span>", unsafe_allow_html=True)
+        st.write(f"🤖 AI Prediction: {'THREAT' if ai_prediction == 1 else 'NO THREAT'}")
+        
+        # Only use rule-based if AI is truly uncertain (low confidence)
+        if ai_confidence < 0.6:  # Less than 60% confident
+            st.warning(f"🤖 AI has {confidence_level} confidence, using rule-based assessment")
+            rule_prediction, rule_confidence, rule_probability = calculate_fallback_risk(user_data)
+            return rule_prediction, rule_probability, "rule-based"
+        else:
+            # Use AI results with high/medium confidence
+            st.success(f"🤖 AI has {confidence_level} confidence, using AI assessment")
+            return ai_prediction, ai_probability, "ai"
         
     else:
         st.warning("🤖 AI model not available, using rule-based assessment")
-        rule_prediction, rule_confidence = calculate_fallback_risk(user_data)
-        return rule_prediction, rule_confidence
+        rule_prediction, rule_confidence, rule_probability = calculate_fallback_risk(user_data)
+        return rule_prediction, rule_probability, "rule-based"
 
 def calculate_risk_score(probability, user_data):
-    """Calculate comprehensive risk score"""
+    """Calculate comprehensive risk score - IMPROVED VERSION"""
+    # Use the probability directly as base risk (0-1 scale)
     base_risk = probability * 100
 
-    # Adjust risk based on key factors
+    # Adjust risk based on key factors (but with much lower weighting)
     risk_factors = {
-        'suspicious_sms_count': 5,
-        'failed_login_attempts': 8,
-        'outdated_apps_count': 3,
-        'public_wifi_usage_hours': 2,
-        'unknown_network_connections': 10
+        'suspicious_sms_count': 2,  # Reduced from 5
+        'failed_login_attempts': 3,  # Reduced from 8
+        'outdated_apps_count': 1,    # Reduced from 3
+        'public_wifi_usage_hours': 1, # Reduced from 2
+        'unknown_network_connections': 4  # Reduced from 10
     }
 
     additional_risk = 0
@@ -246,8 +285,8 @@ def calculate_risk_score(probability, user_data):
         if factor in user_data:
             additional_risk += user_data[factor] * weight
 
-    # Cap additional risk at 30%
-    additional_risk = min(additional_risk, 30)
+    # Cap additional risk at 15% (reduced from 30%)
+    additional_risk = min(additional_risk, 15)
 
     total_risk = min(base_risk + additional_risk, 100)
 
@@ -384,13 +423,17 @@ def single_user_analysis(deployment_package):
     if st.button("🔍 Analyze Threat Level", type="primary"):
         with st.spinner('Analyzing user data...'):
             # Use the new combined prediction system
-            main_prediction, main_probability = predict_threat(user_data, deployment_package)
+            main_prediction, main_probability, system_used = predict_threat(user_data, deployment_package)
 
             # Calculate risk score
             risk_score = calculate_risk_score(main_probability, user_data)
 
             # Display results
             st.header("📊 Analysis Results")
+
+            # System used indicator
+            system_color = "🟢" if system_used == "ai" else "🟡"
+            st.write(f"{system_color} **System Used:** {system_used.upper()}")
 
             # Risk level display
             col1, col2, col3 = st.columns(3)
@@ -408,19 +451,31 @@ def single_user_analysis(deployment_package):
                 st.metric("Threat Status", threat_status)
 
             with col3:
-                confidence = main_probability * 100
-                st.metric("Confidence", f"{confidence:.1f}%")
+                confidence_display = main_probability * 100
+                st.metric("Probability", f"{confidence_display:.1f}%")
+
+            # Debug information
+            with st.expander("🔍 Technical Details"):
+                st.write(f"Final Prediction: {main_prediction}")
+                st.write(f"Final Probability: {main_probability:.3f}")
+                st.write(f"Calculated Risk Score: {risk_score:.1f}%")
+                st.write(f"System Used: {system_used}")
+                
+                # Show which system was more confident
+                if system_used == "ai":
+                    ai_confidence = calculate_ai_confidence(main_probability)
+                    st.write(f"AI Confidence Level: {ai_confidence:.1%}")
 
             # Risk factors breakdown
             st.subheader("🔍 Risk Factors Breakdown")
 
             risk_factors = [
-                ("Suspicious SMS", user_data['suspicious_sms_count'] * 5),
-                ("Failed Logins", user_data['failed_login_attempts'] * 8),
-                ("Outdated Apps", user_data['outdated_apps_count'] * 3),
-                ("Public WiFi", user_data['public_wifi_usage_hours'] * 2),
-                ("Unknown Networks", user_data['unknown_network_connections'] * 10),
-                ("Permission Risk", user_data['permission_risk_index'] * 2)
+                ("Suspicious SMS", user_data['suspicious_sms_count'] * 2),
+                ("Failed Logins", user_data['failed_login_attempts'] * 3),
+                ("Outdated Apps", user_data['outdated_apps_count'] * 1),
+                ("Public WiFi", user_data['public_wifi_usage_hours'] * 1),
+                ("Unknown Networks", user_data['unknown_network_connections'] * 4),
+                ("Permission Risk", user_data['permission_risk_index'] * 1)
             ]
 
             risk_df = pd.DataFrame(risk_factors, columns=['Factor', 'Risk Score'])
@@ -478,9 +533,15 @@ def model_performance(deployment_package):
         st.info("📊 Performance metrics not available in current mode")
     
     st.subheader("🔧 System Information")
-    st.write("**Current Mode:** Rule-Based Threat Detection")
+    st.write("**Detection System:** Hybrid AI + Rule-Based")
     st.write("**AI Models:** Random Forest (Primary)")
-    st.write("**Fallback System:** Active")
+    st.write("**Confidence Threshold:** 60%")
+    st.write("**Fallback System:** Rule-Based Assessment")
+    
+    st.subheader("🎯 Confidence Levels")
+    st.write("- **High Confidence:** ≥ 80% - AI results used")
+    st.write("- **Medium Confidence:** 60-79% - AI results used") 
+    st.write("- **Low Confidence:** < 60% - Rule-based system used")
 
 def about_section():
     """About section for the application"""
@@ -495,6 +556,7 @@ def about_section():
     ### 🎯 Key Features:
     - **Real-time Threat Detection**: Analyzes user behavior and device patterns
     - **AI + Rule-Based System**: Combines machine learning with expert rules
+    - **Smart Confidence Handling**: Uses AI when confident, rules when uncertain
     - **Risk Assessment**: Comprehensive risk scoring with actionable insights
     - **Security Recommendations**: Personalized security advice
 
@@ -503,6 +565,12 @@ def about_section():
     - **Web Framework**: Streamlit
     - **Visualization**: Plotly
     - **Deployment**: Streamlit Cloud
+
+    ### 🧠 How Confidence Works:
+    - **AI Probability**: How likely this is a threat (0-1)
+    - **AI Confidence**: How sure the AI is about its prediction (distance from 0.5)
+    - **High Confidence (≥80%)**: AI results are reliable
+    - **Low Confidence (<60%)**: Rule-based system takes over
 
     ### 🛡️ Protected Features:
     - User behavior analysis
