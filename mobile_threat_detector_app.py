@@ -213,16 +213,21 @@ def predict_threat(user_data, model_data):
         
         st.write(f"🤖 AI Model prediction: {ai_prediction}, confidence: {ai_probability:.2f}")
         
-        # If AI confidence is too low, use fallback
+        # If AI confidence is too low, use fallback but keep AI probability
         if ai_probability < 0.3:  # 30% confidence threshold
             st.warning("🤖 AI confidence low, using rule-based assessment")
-            return calculate_fallback_risk(user_data)
+            rule_prediction, rule_risk = calculate_fallback_risk(user_data)
+            # Return AI probability but rule-based decision
+            return rule_prediction, ai_probability
             
         return ai_prediction, ai_probability
         
     else:
         st.warning("🤖 AI model not available, using rule-based assessment")
-        return calculate_fallback_risk(user_data)
+        rule_prediction, rule_risk = calculate_fallback_risk(user_data)
+        # Convert rule risk to probability for confidence display
+        rule_confidence = max(0.7, rule_risk / 100)  # At least 70% confidence for rules
+        return rule_prediction, rule_confidence
 
 def calculate_risk_score(probability, user_data):
     """Calculate comprehensive risk score"""
