@@ -259,31 +259,19 @@ def main():
     st.markdown('<h1 class="main-header">📱 Mobile Threat Detection System</h1>', unsafe_allow_html=True)
     st.markdown("### For Elderly Users - AI-Powered Security Protection")
 
-    # Load models
+    # Load models with debug info
     with st.spinner('Loading AI models...'):
         models = load_models()
-
-    if models[0] is None:
-        st.error("Failed to load models. Please check if model files are available.")
-        # Show fallback mode message
-        st.info("🔧 Running in Rule-Based Mode - AI models not available")
-        deployment_package = {'feature_columns': []}
-    else:
+    
+    # DEBUG: Show what models loaded
+    if models[0] is not None:
         deployment_package, rf_model, scaler, lstm_model = models
-
-    # Sidebar for navigation
-    st.sidebar.title("Navigation")
-    app_mode = st.sidebar.selectbox(
-        "Choose the app mode",
-        ["Single User Analysis", "Model Performance", "About"]
-    )
-
-    if app_mode == "Single User Analysis":
-        single_user_analysis(deployment_package)
-    elif app_mode == "Model Performance":
-        model_performance(deployment_package)
-    elif app_mode == "About":
-        about_section()
+        st.success(f"✅ AI Model Loaded: {deployment_package.get('best_model_name', 'Random Forest')}")
+        st.write(f"🔧 Model Type: {type(deployment_package.get('best_model'))}")
+        st.write(f"🔧 Feature Count: {len(deployment_package.get('feature_columns', []))}")
+    else:
+        st.error("❌ AI Models Failed to Load - Using Rule-Based Mode Only")
+        deployment_package = {'feature_columns': []}
 
 def single_user_analysis(deployment_package):
     """Single user threat analysis interface"""
