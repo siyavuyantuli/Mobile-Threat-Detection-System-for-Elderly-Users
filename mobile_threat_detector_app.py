@@ -102,45 +102,74 @@ def load_models():
         return None, None, None, None
 
 def calculate_fallback_risk(user_data):
-    """Calculate risk based on rules when AI model fails"""
+    """Calculate risk based on rules when AI model fails - FIXED VERSION"""
     st.info("🔄 Using rule-based risk assessment")
     
     risk_score = 0
     
-    # High-risk factors (heavy weighting)
-    if user_data.get('suspicious_sms_count', 0) > 3:
-        risk_score += 25
-    if user_data.get('failed_login_attempts', 0) > 2:
-        risk_score += 20
-    if user_data.get('unknown_network_connections', 0) > 3:
-        risk_score += 15
-        
-    # Medium-risk factors
-    if user_data.get('public_wifi_usage_hours', 0) > 5:
-        risk_score += 10
-    if user_data.get('outdated_apps_count', 0) > 5:
-        risk_score += 8
+    # HIGH-RISK FACTORS (Major security threats)
+    # Suspicious SMS (phishing attempts)
+    risk_score += min(user_data.get('suspicious_sms_count', 0) * 8, 40)
+    
+    # Failed login attempts (brute force attacks)
+    risk_score += min(user_data.get('failed_login_attempts', 0) * 7, 35)
+    
+    # Unknown network connections (potential MITM attacks)
+    risk_score += min(user_data.get('unknown_network_connections', 0) * 6, 30)
+    
+    # Outdated apps (security vulnerabilities)
+    risk_score += min(user_data.get('outdated_apps_count', 0) * 3, 25)
+    
+    # Public WiFi usage (unsecured networks)
+    risk_score += min(user_data.get('public_wifi_usage_hours', 0) * 2, 20)
+    
+    # MEDIUM-RISK FACTORS (Security hygiene)
+    # No security training
     if not user_data.get('security_training_completed', 0):
-        risk_score += 7
+        risk_score += 15
+    
+    # Old OS updates
+    if user_data.get('days_since_os_update', 0) > 90:
+        risk_score += 10
+    
+    # High permission risks
+    if user_data.get('permission_risk_index', 0) > 15:
+        risk_score += 12
+    
+    # No VPN usage
+    if not user_data.get('vpn_usage', 0):
+        risk_score += 8
         
-    # Low-risk factors
-    if user_data.get('tech_literacy_level', 3) < 2:  # Very low or low
+    # LOW-RISK FACTORS (Behavioral patterns)
+    # Low tech literacy
+    if user_data.get('tech_literacy_level', 3) < 2:
         risk_score += 5
+    
+    # Advanced age
     if user_data.get('age', 65) > 75:
         risk_score += 3
-    if not user_data.get('vpn_usage', 0):
-        risk_score += 2
         
+    # Threat history
+    risk_score += min(user_data.get('threat_severity', 0) * 2, 10)
+    
+    # Spike detections
+    if user_data.get('screen_time_spike', 0):
+        risk_score += 3
+    if user_data.get('data_usage_spike', 0):
+        risk_score += 4
+    if user_data.get('abnormal_battery_drain', 0):
+        risk_score += 3
+    
     # Cap at 100%
     risk_score = min(risk_score, 100)
     
-    # Determine threat (threshold at 40% risk)
+    # Determine threat (threshold at 40% risk) - FIXED LOGIC
     prediction = 1 if risk_score >= 40 else 0
     
     # Calculate confidence based on how clear the risk assessment is
-    if risk_score > 70 or risk_score < 20:
+    if risk_score >= 70 or risk_score <= 20:
         confidence = 0.95  # Very clear cases - high confidence
-    elif risk_score > 50 or risk_score < 40:
+    elif risk_score >= 55 or risk_score <= 35:
         confidence = 0.85  # Moderately clear cases
     else:
         confidence = 0.75  # Borderline cases - lower confidence
@@ -149,8 +178,15 @@ def calculate_fallback_risk(user_data):
     st.write(f"🔧 Rule-based prediction: {'THREAT' if prediction == 1 else 'NO THREAT'}")
     st.write(f"🔧 Rule-based confidence: {confidence:.1%}")
     
-    # Convert risk score to probability (0-1 scale)
-    rule_probability = risk_score / 100.0 if prediction == 1 else (100 - risk_score) / 100.0
+    # FIXED: Proper probability calculation
+    # If we predict THREAT, probability should be high when risk is high
+    # If we predict NO THREAT, probability should be high when risk is low
+    if prediction == 1:
+        # For threat predictions: higher risk = higher probability
+        rule_probability = max(0.5, risk_score / 100.0)  # At least 50% probability for threats
+    else:
+        # For no-threat predictions: lower risk = higher probability  
+        rule_probability = max(0.5, (100 - risk_score) / 100.0)  # At least 50% probability for no-threat
     
     return prediction, confidence, rule_probability
 
@@ -266,18 +302,28 @@ def predict_threat(user_data, model_data):
         rule_prediction, rule_confidence, rule_probability = calculate_fallback_risk(user_data)
         return rule_prediction, rule_probability, "rule-based"
 
-def calculate_risk_score(probability, user_data):
-    """Calculate comprehensive risk score - IMPROVED VERSION"""
-    # Use the probability directly as base risk (0-1 scale)
+def calculate_risk_score(prediction, probability, user_data):
+    """Calculate comprehensive risk score - COMPLETELY FIXED VERSION"""
+    
+    # BASE RISK: Use the probability directly
     base_risk = probability * 100
-
-    # Adjust risk based on key factors (but with much lower weighting)
+    
+    # For THREAT predictions, we should have higher risk scores
+    # For NO THREAT predictions, we should have lower risk scores
+    if prediction == 1:
+        # This is a THREAT - risk should be at least moderate
+        base_risk = max(base_risk, 40)  # At least 40% risk for threats
+    else:
+        # This is NO THREAT - risk should be capped lower
+        base_risk = min(base_risk, 60)  # At most 60% risk for no-threats
+    
+    # Additional risk factors (much smaller adjustment)
     risk_factors = {
-        'suspicious_sms_count': 2,  # Reduced from 5
-        'failed_login_attempts': 3,  # Reduced from 8
-        'outdated_apps_count': 1,    # Reduced from 3
-        'public_wifi_usage_hours': 1, # Reduced from 2
-        'unknown_network_connections': 4  # Reduced from 10
+        'suspicious_sms_count': 1,
+        'failed_login_attempts': 2, 
+        'outdated_apps_count': 0.5,
+        'public_wifi_usage_hours': 0.5,
+        'unknown_network_connections': 1.5
     }
 
     additional_risk = 0
@@ -285,11 +331,17 @@ def calculate_risk_score(probability, user_data):
         if factor in user_data:
             additional_risk += user_data[factor] * weight
 
-    # Cap additional risk at 15% (reduced from 30%)
-    additional_risk = min(additional_risk, 15)
-
-    total_risk = min(base_risk + additional_risk, 100)
-
+    # Cap additional risk at 10%
+    additional_risk = min(additional_risk, 10)
+    
+    # Calculate total risk
+    if prediction == 1:
+        # For threats: base risk + additional risk
+        total_risk = min(base_risk + additional_risk, 100)
+    else:
+        # For no-threats: base risk - additional risk (but not below 0)
+        total_risk = max(base_risk - additional_risk, 0)
+    
     return total_risk
 
 def main():
@@ -425,8 +477,8 @@ def single_user_analysis(deployment_package):
             # Use the new combined prediction system
             main_prediction, main_probability, system_used = predict_threat(user_data, deployment_package)
 
-            # Calculate risk score
-            risk_score = calculate_risk_score(main_probability, user_data)
+            # Calculate risk score - NOW USING PREDICTION + PROBABILITY
+            risk_score = calculate_risk_score(main_prediction, main_probability, user_data)
 
             # Display results
             st.header("📊 Analysis Results")
@@ -470,12 +522,14 @@ def single_user_analysis(deployment_package):
             st.subheader("🔍 Risk Factors Breakdown")
 
             risk_factors = [
-                ("Suspicious SMS", user_data['suspicious_sms_count'] * 2),
-                ("Failed Logins", user_data['failed_login_attempts'] * 3),
-                ("Outdated Apps", user_data['outdated_apps_count'] * 1),
-                ("Public WiFi", user_data['public_wifi_usage_hours'] * 1),
-                ("Unknown Networks", user_data['unknown_network_connections'] * 4),
-                ("Permission Risk", user_data['permission_risk_index'] * 1)
+                ("Suspicious SMS", user_data['suspicious_sms_count'] * 8),
+                ("Failed Logins", user_data['failed_login_attempts'] * 7),
+                ("Outdated Apps", user_data['outdated_apps_count'] * 3),
+                ("Public WiFi", user_data['public_wifi_usage_hours'] * 2),
+                ("Unknown Networks", user_data['unknown_network_connections'] * 6),
+                ("No Security Training", 15 if not security_training else 0),
+                ("Old OS", 10 if days_since_update > 90 else 0),
+                ("Permission Risk", 12 if user_data['permission_risk_index'] > 15 else 0)
             ]
 
             risk_df = pd.DataFrame(risk_factors, columns=['Factor', 'Risk Score'])
@@ -493,17 +547,21 @@ def single_user_analysis(deployment_package):
 
             recommendations = []
             if user_data['outdated_apps_count'] > 5:
-                recommendations.append("🔸 Update outdated applications")
+                recommendations.append("🔸 **URGENT**: Update outdated applications immediately")
             if user_data['public_wifi_usage_hours'] > 5:
-                recommendations.append("🔸 Reduce public WiFi usage")
+                recommendations.append("🔸 **URGENT**: Avoid public WiFi or use VPN")
             if user_data['failed_login_attempts'] > 0:
-                recommendations.append("🔸 Review login security")
+                recommendations.append("🔸 **URGENT**: Change passwords and enable 2FA")
             if user_data['suspicious_sms_count'] > 0:
-                recommendations.append("🔸 Be cautious of suspicious messages")
+                recommendations.append("🔸 **URGENT**: Do not click suspicious links")
             if user_data['permission_risk_index'] > 10:
-                recommendations.append("🔸 Review app permissions")
+                recommendations.append("🔸 **HIGH**: Review and reduce app permissions")
             if not security_training:
-                recommendations.append("🔸 Complete security training")
+                recommendations.append("🔸 **HIGH**: Complete security awareness training")
+            if days_since_update > 90:
+                recommendations.append("🔸 **HIGH**: Update device operating system")
+            if not vpn_usage:
+                recommendations.append("🔸 **MEDIUM**: Use VPN on public networks")
 
             if recommendations:
                 for rec in recommendations:
