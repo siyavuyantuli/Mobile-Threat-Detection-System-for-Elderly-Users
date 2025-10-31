@@ -69,6 +69,13 @@ st.markdown("""
         color: #ff4b4b;
         font-weight: bold;
     }
+    .section-header {
+        background-color: #1f77b4;
+        color: white;
+        padding: 10px;
+        border-radius: 5px;
+        margin-top: 20px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -219,17 +226,21 @@ def predict_threat_ai(user_data, model_data):
         # Check for missing features
         missing_features = [f for f in feature_columns if f not in user_data]
         if missing_features:
-            st.warning(f"Missing features: {missing_features}")
+            st.error(f"❌ CRITICAL: {len(missing_features)} features missing from input!")
+            st.write("Missing features:", missing_features)
+            return 0, 0.0
         
-        # Create input dataframe
+        # Create input dataframe with ALL expected features
         input_df = pd.DataFrame(columns=feature_columns)
         for col in feature_columns:
             if col in user_data:
                 input_df[col] = [user_data[col]]
             else:
-                input_df[col] = [0]  # Default value
+                st.error(f"❌ Feature {col} not found in user data")
+                input_df[col] = [0]  # Emergency fallback
         
-        st.write(f"Final input shape: {input_df.shape}")
+        st.write(f"✅ Final input shape: {input_df.shape}")
+        st.write(f"✅ All {len(feature_columns)} features available")
         
         # Scale features and predict
         if scaler:
@@ -378,102 +389,232 @@ def main():
         about_section()
 
 def single_user_analysis(deployment_package):
-    """Single user threat analysis interface"""
+    """Single user threat analysis interface with ALL 53 features"""
 
     st.header("🔍 Single User Threat Analysis")
+    st.info("📋 Please provide all 53 features for accurate threat detection")
 
-    # Create two columns for input
-    col1, col2 = st.columns(2)
+    # Create tabs for better organization
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "👤 User Profile", 
+        "⚙️ Security Settings", 
+        "📊 Usage Patterns", 
+        "⚠️ Risk Factors", 
+        "🔧 Advanced Metrics"
+    ])
 
-    with col1:
-        st.subheader("User Profile")
-        age = st.slider("Age", 60, 100, 75)
-        tech_literacy = st.select_slider(
-            "Technology Literacy Level",
-            options=['very_low', 'low', 'medium', 'high', 'very_high'],
-            value='medium'
-        )
-        gender = st.radio("Gender", ['Male', 'Female'])
-        device_type = st.selectbox("Device Type", ['Android', 'iOS'])
+    user_data = {}
 
-        st.subheader("Security Settings")
-        security_training = st.checkbox("Completed Security Training")
-        days_since_update = st.slider("Days Since OS Update", 0, 365, 30)
-        outdated_apps = st.slider("Outdated Apps Count", 0, 20, 2)
-        vpn_usage = st.checkbox("Uses VPN")
+    with tab1:
+        st.markdown('<div class="section-header">👤 User Profile & Demographics</div>', unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            age = st.slider("Age", 60, 100, 75)
+            tech_literacy = st.select_slider(
+                "Technology Literacy Level",
+                options=['very_low', 'low', 'medium', 'high', 'very_high'],
+                value='medium'
+            )
+            gender = st.radio("Gender", ['Male', 'Female'])
+            
+        with col2:
+            device_type = st.selectbox("Device Type", ['Android', 'iOS'])
+            location = st.selectbox("Location Type", ['Home', 'Work', 'Public', 'Traveling'])
+            time_of_day = st.slider("Current Time of Day (24h)", 0, 23, 12)
 
-    with col2:
-        st.subheader("Usage Patterns")
-        daily_usage = st.slider("Daily App Usage (minutes)", 0, 480, 120)
-        data_usage = st.slider("Daily Data Usage (MB)", 0, 1000, 200)
-        battery_drain = st.slider("Daily Battery Drain (%)", 0, 100, 30)
+        # Convert categorical to numerical
+        tech_literacy_map = {'very_low': 1, 'low': 2, 'medium': 3, 'high': 4, 'very_high': 5}
+        location_map = {'Home': 1, 'Work': 2, 'Public': 3, 'Traveling': 4}
+        
+        user_data.update({
+            'age': age,
+            'tech_literacy_level': tech_literacy_map[tech_literacy],
+            'gender': 1 if gender == 'Male' else 0,
+            'device_type': 1 if device_type == 'Android' else 0,
+            'location': location_map[location],
+            'time_of_day': time_of_day
+        })
 
-        st.subheader("Risk Factors")
-        suspicious_sms = st.slider("Suspicious SMS Count", 0, 10, 0)
-        failed_logins = st.slider("Failed Login Attempts", 0, 10, 0)
-        public_wifi = st.slider("Public WiFi Usage (hours)", 0, 24, 2)
-        unknown_networks = st.slider("Unknown Network Connections", 0, 10, 0)
+    with tab2:
+        st.markdown('<div class="section-header">⚙️ Security Settings & Configuration</div>', unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            security_training = st.checkbox("Completed Security Training")
+            vpn_usage = st.checkbox("Uses VPN Regularly")
+            os_version_outdated = st.checkbox("OS Version is Outdated")
+            apps_from_unknown_sources = st.checkbox("Apps from Unknown Sources")
+            
+        with col2:
+            days_since_update = st.slider("Days Since OS Update", 0, 365, 30)
+            outdated_apps = st.slider("Outdated Apps Count", 0, 20, 2)
+            previous_incidents = st.slider("Previous Security Incidents", 0, 10, 0)
 
-    # Additional features
-    with st.expander("Advanced Settings"):
-        col3, col4 = st.columns(2)
-        with col3:
+        user_data.update({
+            'security_training_completed': 1 if security_training else 0,
+            'days_since_os_update': days_since_update,
+            'outdated_apps_count': outdated_apps,
+            'vpn_usage': 1 if vpn_usage else 0,
+            'previous_incidents': previous_incidents,
+            'os_version_outdated': 1 if os_version_outdated else 0,
+            'apps_from_unknown_sources': 1 if apps_from_unknown_sources else 0
+        })
+
+    with tab3:
+        st.markdown('<div class="section-header">📊 Usage Patterns & Behavior</div>', unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            daily_usage = st.slider("Daily App Usage (minutes)", 0, 480, 120)
+            data_usage = st.slider("Daily Data Usage (MB)", 0, 1000, 200)
+            battery_drain = st.slider("Daily Battery Drain (%)", 0, 100, 30)
+            late_night_usage = st.slider("Late Night Usage (minutes)", 0, 240, 0)
+            
+        with col2:
+            wifi_sessions = st.slider("Daily WiFi Sessions", 0, 20, 5)
+            mobile_sessions = st.slider("Daily Mobile Data Sessions", 0, 20, 3)
+            background_data = st.slider("Background Data Usage (MB)", 0, 500, 50)
+            weekly_variance = st.slider("Weekly Usage Variance", 0, 100, 20)
+
+        # Delta calculations
+        delta_battery = st.slider("Battery Drain Change vs Last Week (%)", -50, 50, 0)
+        delta_data = st.slider("Data Usage Change vs Last Week (MB)", -500, 500, 0)
+        delta_app_usage = st.slider("App Usage Change vs Last Week (min)", -240, 240, 0)
+
+        user_data.update({
+            'daily_app_usage_minutes': daily_usage,
+            'daily_data_usage_mb': data_usage,
+            'daily_battery_drain_pct': battery_drain,
+            'late_night_usage_minutes': late_night_usage,
+            'wifi_sessions_daily': wifi_sessions,
+            'mobile_data_sessions_daily': mobile_sessions,
+            'background_data_usage_mb': background_data,
+            'weekly_usage_variance': weekly_variance,
+            'delta_battery_drain_pct': delta_battery,
+            'delta_data_usage_mb': delta_data,
+            'delta_app_usage_minutes': delta_app_usage
+        })
+
+    with tab4:
+        st.markdown('<div class="section-header">⚠️ Immediate Risk Factors</div>', unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            suspicious_sms = st.slider("Suspicious SMS Count", 0, 10, 0)
+            failed_logins = st.slider("Failed Login Attempts", 0, 10, 0)
+            public_wifi = st.slider("Public WiFi Usage (hours)", 0, 24, 2)
+            unknown_networks = st.slider("Unknown Network Connections", 0, 10, 0)
+            
+        with col2:
+            suspicious_calls = st.slider("Suspicious Call Count", 0, 10, 0)
+            app_crashes = st.slider("Daily App Crash Count", 0, 10, 0)
+            connection_changes = st.slider("Connection Type Changes", 0, 10, 2)
+            unusual_time_activity = st.slider("Unusual Time Activity Score", 0, 10, 0)
+
+        user_data.update({
+            'suspicious_sms_count': suspicious_sms,
+            'failed_login_attempts': failed_logins,
+            'public_wifi_usage_hours': public_wifi,
+            'unknown_network_connections': unknown_networks,
+            'suspicious_call_count': suspicious_calls,
+            'app_crash_count_daily': app_crashes,
+            'connection_type_changes': connection_changes,
+            'unusual_time_activity': unusual_time_activity
+        })
+
+    with tab5:
+        st.markdown('<div class="section-header">🔧 Advanced Security Metrics</div>', unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        
+        with col1:
             threat_severity = st.slider("Previous Threat Severity", 0, 10, 0)
-            screen_time_spike = st.checkbox("Screen Time Spike Detected")
-            data_usage_spike = st.checkbox("Data Usage Spike Detected")
-            abnormal_battery = st.checkbox("Abnormal Battery Drain")
-
-        with col4:
             camera_permissions = st.slider("Camera Permission Apps", 0, 10, 2)
             location_permissions = st.slider("Location Permission Apps", 0, 10, 3)
             sms_permissions = st.slider("SMS Permission Apps", 0, 10, 1)
+            contacts_permissions = st.slider("Contacts Permission Apps", 0, 10, 2)
+            
+        with col2:
             new_apps_installed = st.slider("New Apps Installed This Week", 0, 10, 1)
+            financial_loss = st.slider("Financial Loss Indicator", 0, 10, 0)
+            data_compromised = st.slider("Data Compromised Indicator", 0, 10, 0)
+            response_time = st.slider("Response Time (seconds)", 0, 3600, 300)
+            network_type = st.selectbox("Primary Network Type", ['Home_WiFi', 'Public_WiFi', 'Mobile_Data', 'Unknown'])
 
-    # Convert inputs to model format
-    tech_literacy_map = {'very_low': 1, 'low': 2, 'medium': 3, 'high': 4, 'very_high': 5}
-    user_data = {
-        'age': age,
-        'tech_literacy_level': tech_literacy_map[tech_literacy],
-        'gender': 1 if gender == 'Male' else 0,
-        'device_type': 1 if device_type == 'Android' else 0,
-        'security_training_completed': 1 if security_training else 0,
-        'days_since_os_update': days_since_update,
-        'outdated_apps_count': outdated_apps,
-        'vpn_usage': 1 if vpn_usage else 0,
-        'daily_app_usage_minutes': daily_usage,
-        'daily_data_usage_mb': data_usage,
-        'daily_battery_drain_pct': battery_drain,
-        'suspicious_sms_count': suspicious_sms,
-        'failed_login_attempts': failed_logins,
-        'public_wifi_usage_hours': public_wifi,
-        'unknown_network_connections': unknown_networks,
-        'threat_severity': threat_severity,
-        'screen_time_spike': 1 if screen_time_spike else 0,
-        'data_usage_spike': 1 if data_usage_spike else 0,
-        'abnormal_battery_drain': 1 if abnormal_battery else 0,
-        'camera_permission_apps': camera_permissions,
-        'location_permission_apps': location_permissions,
-        'sms_permission_apps': sms_permissions,
-        'new_apps_installed_week': new_apps_installed
-    }
+        # Additional advanced metrics
+        col3, col4 = st.columns(2)
+        with col3:
+            screen_time_spike = st.checkbox("Screen Time Spike Detected")
+            data_usage_spike = st.checkbox("Data Usage Spike Detected")
+            abnormal_battery = st.checkbox("Abnormal Battery Drain")
+            
+        with col4:
+            threat_type = st.selectbox("Threat Type Category", [
+                'None', 'Phishing', 'Malware', 'Data_Theft', 'Financial_Fraud', 
+                'Identity_Theft', 'Ransomware', 'Other'
+            ])
+            app_name = st.selectbox("Primary App Concern", [
+                'None', 'Browser', 'Social_Media', 'Banking', 'Email', 
+                'Messaging', 'Games', 'Other'
+            ])
 
-    # Add engineered features
-    user_data['comprehensive_risk_score'] = (
-        user_data['threat_severity'] +
-        user_data['suspicious_sms_count'] +
-        user_data['failed_login_attempts'] +
-        user_data['outdated_apps_count']
-    )
+        # Convert categorical to numerical
+        threat_type_map = {
+            'None': 0, 'Phishing': 1, 'Malware': 2, 'Data_Theft': 3, 
+            'Financial_Fraud': 4, 'Identity_Theft': 5, 'Ransomware': 6, 'Other': 7
+        }
+        app_name_map = {
+            'None': 0, 'Browser': 1, 'Social_Media': 2, 'Banking': 3, 
+            'Email': 4, 'Messaging': 5, 'Games': 6, 'Other': 7
+        }
+        network_type_map = {
+            'Home_WiFi': 1, 'Public_WiFi': 2, 'Mobile_Data': 3, 'Unknown': 4
+        }
 
-    user_data['permission_risk_index'] = (
-        user_data['camera_permission_apps'] +
-        user_data['sms_permission_apps'] +
-        user_data['location_permission_apps']
-    )
+        # Calculate composite scores
+        permission_risk_index = camera_permissions + location_permissions + sms_permissions + contacts_permissions
+        abnormal_behavior_score = min(100, (suspicious_sms * 10 + failed_logins * 8 + unknown_networks * 6))
+        network_security_index = 100 - (public_wifi * 3 + unknown_networks * 5)
+        battery_data_ratio = battery_drain / max(data_usage, 1)
+        usage_efficiency = max(0, 100 - (battery_drain * 0.5 + data_usage * 0.1))
+
+        user_data.update({
+            'threat_severity': threat_severity,
+            'camera_permission_apps': camera_permissions,
+            'location_permission_apps': location_permissions,
+            'sms_permission_apps': sms_permissions,
+            'contacts_permission_apps': contacts_permissions,
+            'new_apps_installed_week': new_apps_installed,
+            'financial_loss': financial_loss,
+            'data_compromised': data_compromised,
+            'response_time_seconds': response_time,
+            'network_type': network_type_map[network_type],
+            'screen_time_spike': 1 if screen_time_spike else 0,
+            'data_usage_spike': 1 if data_usage_spike else 0,
+            'abnormal_battery_drain': 1 if abnormal_battery else 0,
+            'threat_type': threat_type_map[threat_type],
+            'app_name': app_name_map[app_name],
+            'permission_risk_index': permission_risk_index,
+            'abnormal_behavior_score': abnormal_behavior_score,
+            'network_security_index': network_security_index,
+            'battery_data_ratio': battery_data_ratio,
+            'usage_efficiency': usage_efficiency
+        })
+
+    # Display feature count validation
+    st.info(f"📊 Total features provided: {len(user_data)}/53")
+    if len(user_data) < 53:
+        st.warning(f"❌ Missing {53 - len(user_data)} features. Please check all tabs.")
+    else:
+        st.success("✅ All 53 features provided!")
 
     # Analyze button
     if st.button("🔍 Analyze Threat Level", type="primary"):
-        with st.spinner('Analyzing user data...'):
+        if len(user_data) < 53:
+            st.error("❌ Please provide all 53 features for accurate analysis")
+            return
+            
+        with st.spinner('Analyzing user data with all 53 features...'):
             # Use the new combined prediction system
             main_prediction, main_probability, system_used = predict_threat(user_data, deployment_package)
 
@@ -512,6 +653,7 @@ def single_user_analysis(deployment_package):
                 st.write(f"Final Probability: {main_probability:.3f}")
                 st.write(f"Calculated Risk Score: {risk_score:.1f}%")
                 st.write(f"System Used: {system_used}")
+                st.write(f"Total Features Provided: {len(user_data)}")
                 
                 # Show which system was more confident
                 if system_used == "ai":
@@ -524,12 +666,14 @@ def single_user_analysis(deployment_package):
             risk_factors = [
                 ("Suspicious SMS", user_data['suspicious_sms_count'] * 8),
                 ("Failed Logins", user_data['failed_login_attempts'] * 7),
+                ("Unknown Networks", user_data['unknown_network_connections'] * 6),
                 ("Outdated Apps", user_data['outdated_apps_count'] * 3),
                 ("Public WiFi", user_data['public_wifi_usage_hours'] * 2),
-                ("Unknown Networks", user_data['unknown_network_connections'] * 6),
-                ("No Security Training", 15 if not security_training else 0),
-                ("Old OS", 10 if days_since_update > 90 else 0),
-                ("Permission Risk", 12 if user_data['permission_risk_index'] > 15 else 0)
+                ("No Security Training", 15 if not user_data.get('security_training_completed', 0) else 0),
+                ("Old OS", 10 if user_data.get('days_since_os_update', 0) > 90 else 0),
+                ("Permission Risk", user_data['permission_risk_index'] * 0.5),
+                ("Suspicious Calls", user_data['suspicious_call_count'] * 3),
+                ("App Crashes", user_data['app_crash_count_daily'] * 2)
             ]
 
             risk_df = pd.DataFrame(risk_factors, columns=['Factor', 'Risk Score'])
@@ -554,14 +698,16 @@ def single_user_analysis(deployment_package):
                 recommendations.append("🔸 **URGENT**: Change passwords and enable 2FA")
             if user_data['suspicious_sms_count'] > 0:
                 recommendations.append("🔸 **URGENT**: Do not click suspicious links")
-            if user_data['permission_risk_index'] > 10:
+            if user_data['permission_risk_index'] > 15:
                 recommendations.append("🔸 **HIGH**: Review and reduce app permissions")
-            if not security_training:
+            if not user_data.get('security_training_completed', 0):
                 recommendations.append("🔸 **HIGH**: Complete security awareness training")
-            if days_since_update > 90:
+            if user_data['days_since_os_update'] > 90:
                 recommendations.append("🔸 **HIGH**: Update device operating system")
-            if not vpn_usage:
+            if not user_data.get('vpn_usage', 0):
                 recommendations.append("🔸 **MEDIUM**: Use VPN on public networks")
+            if user_data['apps_from_unknown_sources']:
+                recommendations.append("🔸 **MEDIUM**: Only install apps from official stores")
 
             if recommendations:
                 for rec in recommendations:
@@ -595,6 +741,7 @@ def model_performance(deployment_package):
     st.write("**AI Models:** Random Forest (Primary)")
     st.write("**Confidence Threshold:** 60%")
     st.write("**Fallback System:** Rule-Based Assessment")
+    st.write("**Total Features:** 53 comprehensive security metrics")
     
     st.subheader("🎯 Confidence Levels")
     st.write("- **High Confidence:** ≥ 80% - AI results used")
@@ -609,9 +756,10 @@ def about_section():
     ## Mobile Threat Detection System for Elderly Users
 
     This AI-powered application helps detect and mitigate mobile-specific threats for elderly users
-    by analyzing various behavioral patterns and device characteristics.
+    by analyzing 53 comprehensive security features across multiple dimensions.
 
     ### 🎯 Key Features:
+    - **53-Point Security Assessment**: Comprehensive feature analysis
     - **Real-time Threat Detection**: Analyzes user behavior and device patterns
     - **AI + Rule-Based System**: Combines machine learning with expert rules
     - **Smart Confidence Handling**: Uses AI when confident, rules when uncertain
@@ -624,18 +772,18 @@ def about_section():
     - **Visualization**: Plotly
     - **Deployment**: Streamlit Cloud
 
+    ### 📊 Feature Categories:
+    1. **User Profile & Demographics** (6 features)
+    2. **Security Settings & Configuration** (7 features) 
+    3. **Usage Patterns & Behavior** (11 features)
+    4. **Immediate Risk Factors** (8 features)
+    5. **Advanced Security Metrics** (21 features)
+
     ### 🧠 How Confidence Works:
     - **AI Probability**: How likely this is a threat (0-1)
     - **AI Confidence**: How sure the AI is about its prediction (distance from 0.5)
     - **High Confidence (≥80%)**: AI results are reliable
     - **Low Confidence (<60%)**: Rule-based system takes over
-
-    ### 🛡️ Protected Features:
-    - User behavior analysis
-    - Device security settings
-    - Network usage patterns
-    - App permission risks
-    - Historical threat data
     """)
 
     st.success("This system is designed specifically for elderly users to enhance their mobile security!")
